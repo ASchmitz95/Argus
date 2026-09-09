@@ -33,3 +33,76 @@ def detect_color(frame: npt.NDArray[np.uint8], target_coler: tuple[int, int, int
     pixels = np.argwhere(mask)[:, ::-1]
 
     return pixels
+
+def detect_objects(pixels: npt.NDArray[np.intp], min_area: int, gap: int = 5,) -> npt.NDArray[np.int32]:
+    """Group pixels into connected regions and return their bounding boxes.
+
+    Args:
+        pixels: Non-negative (x, y) pixel coordinates with shape (N, 2).
+        min_area: Minimum component area in pixels after morphological closing.
+        gap: Side length of the square closing kernel. Must be positive.
+
+    Returns:
+        Integer array with shape (M, 4). Each row contains
+        (center_x, center_y, width, height) of a bounding box.
+        Boxes fully contained in another component's box are excluded.
+    """
+    if len(pixels) == 0:
+        return np.empty((0, 4), dtype=np.int32)
+
+    width = pixels[:, 0].max() + 1
+    height = pixels[:, 1].max() + 1
+
+    mask = np.zeros((height, width), dtype=np.uint8)
+    mask[pixels[:, 1], pixels[:, 0]] = 255
+
+    # Close small holes and bridge nearby regions.
+    kernel = np.ones((gap, gap), dtype=np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    count, _, stats, _ = cv2.connectedComponentsWithStats(
+        mask,
+        connectivity=8,
+    )
+
+    components = []
+
+    # Label 0 represents the background.
+    for i in range(1, count):
+        if stats[i, cv2.CC_STAT_AREA] < min_area:
+            continue
+
+        x = stats[i, cv2.CC_STAT_LEFT]
+        y = stats[i, cv2.CC_STAT_TOP]
+        w = stats[i, cv2.CC_STAT_WIDTH]
+        h = stats[i, cv2.CC_STAT_HEIGHT]
+
+        components.append((x, y, w, h))
+
+    objects = []
+
+    for i, (x, y, w, h) in enumerate(components):
+        inside_other = False
+
+        for j, (x2, y2, w2, h2) in enumerate(components):
+            if i == j:
+                continue
+
+            if (
+                x >= x2
+                and y >= y2
+                and x + w <= x2 + w2
+                and y + h <= y2 + h2
+            ):
+                inside_other = True
+                break
+
+        if inside_other:
+            continue
+
+        center_x = x + w // 2
+        center_y = y + h // 2
+
+        objects.append([center_x, center_y, w, h])
+
+    return np.array(objects, dtype=np.int32).reshape(-1, 4)
