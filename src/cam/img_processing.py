@@ -106,3 +106,28 @@ def detect_objects(pixels: npt.NDArray[np.intp], min_area: int, gap: int = 5,) -
         objects.append([center_x, center_y, w, h])
 
     return np.array(objects, dtype=np.int32).reshape(-1, 4)
+
+
+def get_distance(objects, cam_width, cam_height, tolerance_size):
+    """Return the largest bounding box's offset toward the image center.
+
+    Args:
+        objects: Array with shape (N, 4), containing
+            (center_x, center_y, width, height) for each object.
+        cam_width: Image width in pixels.
+        cam_height: Image height in pixels.
+        tolerance_size: Per-axis threshold in pixels.
+            Return offsets if either absolute offset reaches this threshold.
+
+    Returns:
+        (horizontal, vertical) offsets in pixels.
+        Positive values indicate an object left of or above the image center.
+        Returns None if no objects exist or both offsets are below the threshold.
+    """
+    if objects.size > 0:
+        biggest = objects[(objects[:,2] * objects[:,3]).argmax()]
+        distance_horizontal = int(-(biggest[0] - cam_width//2))
+        distance_perpendicular = int(-(biggest[1] - cam_height//2))
+        if abs(distance_horizontal) >= tolerance_size or abs(distance_perpendicular) >= tolerance_size:
+            return (distance_horizontal, distance_perpendicular)
+    return None
