@@ -9,6 +9,7 @@ SPEED     = 2400
 ACC       = 200
 TOLERANZ  = 8
 NULL_POS = {2 : 2051, 3 : 1050, 4 : 900, 5 : 2112, 6 : 2240, 7 : 1981}
+SERVO_RANGE = {2: (-100 , 100), 3: (-2 , 180), 4: (-2 , 180), 5: (-100 , 100), 6: (-90 , 90), 7: (-1 , 40)}
 
 
 def read_pos(pk, servo_ID, degree=False):
@@ -67,10 +68,17 @@ def connect():
     sys.exit("Keine Verbindung möglich.")
 
 
+def check_collision(angles):
+    """Clamp target angles for servos 2–7 to their configured limits."""
+    angles = [min(max(angles[i-2] , SERVO_RANGE[i][0]) , SERVO_RANGE[i][1]) for i in range(2,8)]
+    return angles
+
+
 def move_to_angles(pk, angles, timeout=1):
     """Move servos 2-7 to angles in degrees relative to their calibrated
     zero positions, waiting until motion completes or the timeout expires.
     """
+    angles = check_collision(angles)
     target_pos_List = [(NULL_POS[i] + int(angles[i-2] / 360 * STEPS_PER_REV)) % STEPS_PER_REV for i in range(2,8)]
     start = time.time()
     for i in range(2,8):
