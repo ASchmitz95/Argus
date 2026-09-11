@@ -95,3 +95,9 @@ def move_by_angles(pk, angle_offsets):
     current_pos_List = [(read_pos(pk, i, degree=True)) for i in range(2,8)]
     target_pos_List = [current_pos_List[i] + angle_offsets[i] for i in range(len(angle_offsets))]
     move_to_angles(pk, target_pos_List)
+
+
+def go_home():
+    """Returns all servoes to their Null Position.
+    """
+    move_to_angles([0,0,0,0,0,0])
