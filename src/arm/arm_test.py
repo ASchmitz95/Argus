@@ -15,6 +15,8 @@ TOLERANCE_SIZE = 150
 def main():
     ph, pk = connect()
 
+    move_to_angles(pk, [0,20,60,0,40,0])
+
     cam = cv2.VideoCapture(0, cv2.CAP_MSMF)
     color_tolerance = 0.085
     target_color = [255,0,0]
@@ -54,8 +56,8 @@ def main():
 
 
 def rot_cam(pk, target_cam_movement):
-    z = target_cam_movement[0]//50 if abs(target_cam_movement[0]) >= 100 else 0
-    y = -target_cam_movement[1]//50 if abs(target_cam_movement[1]) >= 100 else 0
+    z = target_cam_movement[0]//30 if abs(target_cam_movement[0]) >= 100 else 0
+    y = -target_cam_movement[1]//30 if abs(target_cam_movement[1]) >= 100 else 0
 
     move_by_angles(pk, (z, 0, 0, 0, y, 0))
 
