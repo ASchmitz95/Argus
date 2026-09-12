@@ -29,3 +29,6 @@ checkpoints/
 # Betriebssystem
 .DS_Store
 Thumbs.db
+
+# Local test scripts
+*_test.py
