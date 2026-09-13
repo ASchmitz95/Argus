@@ -1,10 +1,11 @@
 {
     "baud": 1000000,
     "steps_per_rev": 4096,
-    "speed": 2400,
+    "speed": 1200,
     "acc": 200,
     "tolerance": 8,
-    "max_load": 800,
+    "max_load_moving": 500,
+    "max_load_holding": 300,
     "servos": {
         "2": {"null_pos": 2051, "min_angle": -100, "max_angle": 100},
         "3": {"null_pos": 1050, "min_angle": -2,   "max_angle": 180},

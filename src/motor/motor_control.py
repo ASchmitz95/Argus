@@ -106,7 +106,8 @@ def move_to_angles(pk, angles, timeout=1):
     calibrated zero positions, waiting until motion completes or the timeout expires.
 
     Raises:
-        RuntimeError: If a servo's load exceeds max_load while waiting.
+        RuntimeError: If a servo's load exceeds max_load_moving while it moves
+            or max_load_holding while it holds its position.
             All servos are stopped before raising.
     """
     angles = check_collision(angles)
@@ -118,12 +119,14 @@ def move_to_angles(pk, angles, timeout=1):
     while time.time() - start <= timeout:
         flag = True
         for servo_ID, pos in target_pos.items():
+            moving, _, _ = pk.ReadMoving(servo_ID)
             # Stop on overload, e.g. when the arm hits an obstacle.
+            # Moving servos need more load than holding ones.
             load = read_load(pk, servo_ID)
-            if abs(load) > CONFIG["max_load"]:
+            max_load = CONFIG["max_load_moving"] if moving else CONFIG["max_load_holding"]
+            if abs(load) > max_load:
                 stop(pk)
                 raise RuntimeError(f"Überlast an Servo {servo_ID} ({load}); Arm gestoppt.")
-            moving, _, _ = pk.ReadMoving(servo_ID)
             if abs(read_pos(pk, servo_ID) - pos) > CONFIG["tolerance"]:
                 flag = False
             if moving != 0:
