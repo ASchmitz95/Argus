@@ -1,4 +1,4 @@
-from scservo_sdk import PortHandler, sms_sts, COMM_SUCCESS
+from scservo_sdk import PortHandler, sms_sts, COMM_SUCCESS, SMS_STS_PRESENT_LOAD_L
 import serial.tools.list_ports
 import json
 import sys
@@ -32,6 +32,31 @@ def read_pos(pk, servo_ID, degree=False):
         pos = ((pos - SERVOS[servo_ID]["null_pos"]) / CONFIG["steps_per_rev"]) * 360
         return pos
     return pos
+
+
+def read_load(pk, servo_ID):
+    """Read a servo's current load.
+
+    Args:
+        pk: Servo communication interface.
+        servo_ID: ID of the servo to read.
+
+    Returns:
+        Signed load in 0.1 % of the maximum torque (-1000 to 1000).
+        The sign indicates the direction of the load.
+    """
+    load, _, _ = pk.read2ByteTxRx(servo_ID, SMS_STS_PRESENT_LOAD_L)
+    # Bit 10 encodes the direction.
+    return pk.scs_tohost(load, 10)
+
+
+def stop(pk):
+    """Hold all configured servos at their current positions.
+
+    Torque stays enabled, so the arm does not fall under gravity.
+    """
+    for servo_ID in SERVOS:
+        pk.WritePosEx(servo_ID, read_pos(pk, servo_ID), CONFIG["speed"], CONFIG["acc"])
 
 
 def connect():
@@ -79,6 +104,10 @@ def check_collision(angles):
 def move_to_angles(pk, angles, timeout=1):
     """Move all configured servos to angles in degrees relative to their
     calibrated zero positions, waiting until motion completes or the timeout expires.
+
+    Raises:
+        RuntimeError: If a servo's load exceeds max_load while waiting.
+            All servos are stopped before raising.
     """
     angles = check_collision(angles)
     steps = CONFIG["steps_per_rev"]
@@ -89,6 +118,11 @@ def move_to_angles(pk, angles, timeout=1):
     while time.time() - start <= timeout:
         flag = True
         for servo_ID, pos in target_pos.items():
+            # Stop on overload, e.g. when the arm hits an obstacle.
+            load = read_load(pk, servo_ID)
+            if abs(load) > CONFIG["max_load"]:
+                stop(pk)
+                raise RuntimeError(f"Überlast an Servo {servo_ID} ({load}); Arm gestoppt.")
             moving, _, _ = pk.ReadMoving(servo_ID)
             if abs(read_pos(pk, servo_ID) - pos) > CONFIG["tolerance"]:
                 flag = False

@@ -4,6 +4,7 @@
     "speed": 2400,
     "acc": 200,
     "tolerance": 8,
+    "max_load": 800,
     "servos": {
         "2": {"null_pos": 2051, "min_angle": -100, "max_angle": 100},
         "3": {"null_pos": 1050, "min_angle": -2,   "max_angle": 180},
