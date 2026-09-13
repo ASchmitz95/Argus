@@ -1,0 +1,12 @@
+{
+    "unit": "mm",
+    "joints": [
+        {"servo_id": 2, "axis": "z", "position": [15.5, 0, 54.7], "direction": -1},
+        {"servo_id": 3, "axis": "y", "position": [38.5, 0, 99.2], "direction": 1},
+        {"servo_id": 4, "axis": "y", "position": [-61.5, 0, 99.2], "direction": -1},
+        {"servo_id": 5, "axis": "x", "position": [52.65, 0, 130.2], "direction": -1},
+        {"servo_id": 6, "axis": "y", "position": [52.65, 0, 130.2], "direction": 1},
+        {"servo_id": 7, "axis": "x", "position": [52.65, 0, 130.2], "direction": -1}
+    ],
+    "tool": {"position": [152.85, 0, 130.2], "rpy": [0, 0, 0]}
+}
