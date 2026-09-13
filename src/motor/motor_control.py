@@ -85,8 +85,8 @@ def move_to_angles(pk, angles, timeout=1):
         pk.WritePosEx(i, target_pos_List[i-2], SPEED, ACC)
     while time.time() - start <= timeout:
         flag = True
-        moving, _, _ = pk.ReadMoving(i)
         for i in range(2,8):
+            moving, _, _ = pk.ReadMoving(i)
             if abs(read_pos(pk, i) - target_pos_List[i-2]) > TOLERANZ:
                 flag = False
             if moving != 0:
@@ -105,7 +105,7 @@ def move_by_angles(pk, angle_offsets):
     move_to_angles(pk, target_pos_List)
 
 
-def go_home():
+def go_home(pk):
     """Returns all servoes to their Null Position.
     """
-    move_to_angles([0,0,0,0,0,0])
+    move_to_angles(pk, [0,0,0,0,0,0])
