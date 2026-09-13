@@ -161,6 +161,7 @@ def inverse_kinematics(
     damping: float = 5.0,
     max_step: float = 10.0,
     rot_weight: float = 100.0,
+    best_effort: bool = False,
 ) -> list[float] | None:
     """Find servo angles that move the tool to a target pose.
 
@@ -177,12 +178,16 @@ def inverse_kinematics(
             singularities but converge slower.
         max_step: Maximum change of a single servo angle per iteration in degrees.
         rot_weight: Length in mm that one radian of orientation error counts as.
+        best_effort: If True, return the angles closest to the target instead
+            of None when the tolerances are not reached.
 
     Returns:
         Servo angles in degrees in the order of SERVOS, or None if the target
-        is not reached within the tolerances.
+        is not reached within the tolerances and best_effort is False.
     """
     angles = np.array(check_collision(list(start_angles)), dtype=float)
+    best_angles = angles
+    best_error = np.inf
 
     for _ in range(max_iter):
         pose = forward_kinematics(angles)
@@ -194,6 +199,9 @@ def inverse_kinematics(
 
         # Weight orientation so that mm and radians are comparable.
         error = np.concatenate([pos_error, rot_weight * rot_error])
+        if np.linalg.norm(error) < best_error:
+            best_angles = angles
+            best_error = np.linalg.norm(error)
         jac = jacobian(angles)
         jac[3:] *= rot_weight
 
@@ -206,4 +214,6 @@ def inverse_kinematics(
 
         angles = np.array(check_collision((angles + step).tolist()))
 
+    if best_effort:
+        return best_angles.tolist()
     return None
