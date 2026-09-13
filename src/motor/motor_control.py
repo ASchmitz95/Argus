@@ -149,6 +149,11 @@ def move_to_angles(pk, angles, timeout=1):
     """Move all configured servos to angles in degrees relative to their
     calibrated zero positions, waiting until motion completes or the timeout expires.
 
+    Returns:
+        True if all servos reached their target within the tolerance,
+        False if the timeout expired first. The servos keep moving toward
+        the target in that case.
+
     Raises:
         RuntimeError: If a servo's load exceeds max_load_moving while it moves
             or max_load_holding while it holds its position.
@@ -170,20 +175,26 @@ def move_to_angles(pk, angles, timeout=1):
             if moving != 0:
                 flag = False
         if flag:
-            return
-    #raise TimeoutError("Ziel nicht rechtzeitig erreicht; Haltebefehle gesendet.")
+            return True
+    return False
 
 
 def move_by_angles(pk, angle_offsets):
     """Move all configured servos by the given signed offsets in degrees
     relative to their current positions.
+
+    Returns:
+        True if the target was reached, False on timeout, see move_to_angles.
     """
     current_pos_List = [read_pos(pk, servo_ID, degree=True) for servo_ID in SERVOS]
     target_pos_List = [current + offset for current, offset in zip(current_pos_List, angle_offsets, strict=True)]
-    move_to_angles(pk, target_pos_List)
+    return move_to_angles(pk, target_pos_List)
 
 
 def go_home(pk):
     """Returns all servoes to their Null Position.
+
+    Returns:
+        True if the zero positions were reached, False on timeout, see move_to_angles.
     """
-    move_to_angles(pk, [0] * len(SERVOS))
+    return move_to_angles(pk, [0] * len(SERVOS))

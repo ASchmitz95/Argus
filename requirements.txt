@@ -1,0 +1,5 @@
+numpy>=2.5
+opencv-python>=5.0
+pyserial>=3.5
+ftservo-python-sdk>=2.0
+pytest>=9.1

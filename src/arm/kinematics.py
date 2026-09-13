@@ -152,6 +152,42 @@ def rotation_error(target: npt.NDArray[np.float64], current: npt.NDArray[np.floa
     return angle / (2 * np.sin(angle)) * vee
 
 
+def orientation_error(target: npt.NDArray[np.float64], current: npt.NDArray[np.float64], mode: str = "full") -> npt.NDArray[np.float64]:
+    """Return the orientation error that matters for the given IK mode.
+
+    Args:
+        target: Target rotation matrix with shape (3, 3).
+        current: Current rotation matrix with shape (3, 3).
+        mode: "full" for the complete orientation, "direction" for the
+            direction of the tool x-axis only, "position" to ignore the orientation.
+
+    Returns:
+        Rotation vector with shape (3,), length in radians, see rotation_error.
+
+    Raises:
+        ValueError: If mode is unknown.
+    """
+    if mode == "full":
+        return rotation_error(target, current)
+
+    if mode == "direction":
+        # Shortest rotation that turns the current tool x-axis into the target one.
+        current_axis, target_axis = current[:, 0], target[:, 0]
+        cross = np.cross(current_axis, target_axis)
+        angle = np.arctan2(np.linalg.norm(cross), current_axis @ target_axis)
+        if np.linalg.norm(cross) < 1e-9:
+            if angle < np.pi / 2:
+                return np.zeros(3)
+            # Opposite direction, turn about any axis perpendicular to the tool axis.
+            cross = np.cross(current_axis, AXES["z"] if abs(current_axis[2]) < 0.9 else AXES["y"])
+        return angle * cross / np.linalg.norm(cross)
+
+    if mode == "position":
+        return np.zeros(3)
+
+    raise ValueError(f"Unbekannter IK-Modus '{mode}', erlaubt: full, direction, position.")
+
+
 def inverse_kinematics(
     target_pose: npt.NDArray[np.float64],
     start_angles: npt.ArrayLike,
@@ -162,11 +198,14 @@ def inverse_kinematics(
     max_step: float = 10.0,
     rot_weight: float = 100.0,
     best_effort: bool = False,
+    mode: str = "full",
 ) -> list[float] | None:
     """Find servo angles that move the tool to a target pose.
 
     Uses damped least squares, starting from start_angles. After each step
     the angles are clamped to the servo limits with check_collision.
+    Depending on mode, the orientation is matched completely, only the
+    direction of the tool x-axis, or not at all.
 
     Args:
         target_pose: Target tool pose with shape (4, 4), position in mm.
@@ -180,10 +219,14 @@ def inverse_kinematics(
         rot_weight: Length in mm that one radian of orientation error counts as.
         best_effort: If True, return the angles closest to the target instead
             of None when the tolerances are not reached.
+        mode: "full", "direction" or "position", see orientation_error.
 
     Returns:
         Servo angles in degrees in the order of SERVOS, or None if the target
         is not reached within the tolerances and best_effort is False.
+
+    Raises:
+        ValueError: If mode is unknown.
     """
     angles = np.array(check_collision(list(start_angles)), dtype=float)
     best_angles = angles
@@ -192,7 +235,7 @@ def inverse_kinematics(
     for _ in range(max_iter):
         pose = forward_kinematics(angles)
         pos_error = target_pose[:3, 3] - pose[:3, 3]
-        rot_error = rotation_error(target_pose[:3, :3], pose[:3, :3])
+        rot_error = orientation_error(target_pose[:3, :3], pose[:3, :3], mode)
 
         if np.linalg.norm(pos_error) <= pos_tol and np.degrees(np.linalg.norm(rot_error)) <= rot_tol:
             return angles.tolist()
@@ -204,6 +247,13 @@ def inverse_kinematics(
             best_error = np.linalg.norm(error)
         jac = jacobian(angles)
         jac[3:] *= rot_weight
+
+        # Rotation about the tool x-axis does not change its direction, so it is free.
+        if mode == "direction":
+            tool_axis = pose[:3, 0]
+            jac[3:] = (np.eye(3) - np.outer(tool_axis, tool_axis)) @ jac[3:]
+        elif mode == "position":
+            jac[3:] = 0
 
         step = jac.T @ np.linalg.solve(jac @ jac.T + damping**2 * np.eye(6), error)
         step = np.degrees(step)

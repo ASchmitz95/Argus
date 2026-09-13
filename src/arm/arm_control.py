@@ -3,7 +3,7 @@ import numpy.typing as npt
 import time
 from motor.motor_control import CONFIG, SERVOS, read_pos, move_to_angles, angles_to_steps, check_load, sync_write_pos
 from arm.kinematics import CONFIG as ARM_CONFIG
-from arm.kinematics import AXES, forward_kinematics, inverse_kinematics, rotation, rotation_error
+from arm.kinematics import AXES, forward_kinematics, inverse_kinematics, orientation_error, rotation, rotation_error
 
 
 def read_angles(pk) -> list[float]:
@@ -16,6 +16,7 @@ def solve_pose(
     start_angles: list[float],
     attempts: int = 10,
     max_angle_change: float = 90,
+    mode: str = "full",
 ) -> list[float] | None:
     """Find servo angles for a target pose with as little joint motion as possible.
 
@@ -28,6 +29,7 @@ def solve_pose(
         start_angles: Current servo angles in degrees.
         attempts: Number of random restarts.
         max_angle_change: Largest allowed change of a single servo angle in degrees.
+        mode: "full", "direction" or "position", see orientation_error.
 
     Returns:
         Servo angles in degrees in the order of SERVOS, or None if no solution
@@ -35,7 +37,7 @@ def solve_pose(
     """
     start = np.array(start_angles, dtype=float)
 
-    result = inverse_kinematics(target_pose, start_angles)
+    result = inverse_kinematics(target_pose, start_angles, mode=mode)
     if result is not None and np.abs(np.array(result) - start).max() <= max_angle_change:
         return result
 
@@ -45,7 +47,7 @@ def solve_pose(
     best_change = max_angle_change
 
     for _ in range(attempts):
-        result = inverse_kinematics(target_pose, rng.uniform(limits[:, 0], limits[:, 1]))
+        result = inverse_kinematics(target_pose, rng.uniform(limits[:, 0], limits[:, 1]), mode=mode)
         if result is None:
             continue
 
@@ -58,7 +60,7 @@ def solve_pose(
     return best
 
 
-def move_to_pose(pk, target_pose: npt.NDArray[np.float64], attempts: int = 10, max_angle_change: float = 90) -> list[float] | None:
+def move_to_pose(pk, target_pose: npt.NDArray[np.float64], attempts: int = 10, max_angle_change: float = 90, mode: str = "full") -> list[float] | None:
     """Move the tool to a target pose.
 
     Starts the inverse kinematics from the current servo angles and waits
@@ -69,6 +71,7 @@ def move_to_pose(pk, target_pose: npt.NDArray[np.float64], attempts: int = 10, m
         target_pose: Target tool pose with shape (4, 4), position in mm.
         attempts: Number of random restarts, see solve_pose.
         max_angle_change: Largest allowed change of a single servo angle in degrees.
+        mode: "full", "direction" or "position", see orientation_error.
 
     Returns:
         The commanded servo angles in degrees, or None if the pose is not reachable.
@@ -77,7 +80,7 @@ def move_to_pose(pk, target_pose: npt.NDArray[np.float64], attempts: int = 10, m
         RuntimeError: If a servo is overloaded during the motion, see move_to_angles.
     """
     start = read_angles(pk)
-    result = solve_pose(target_pose, start, attempts, max_angle_change)
+    result = solve_pose(target_pose, start, attempts, max_angle_change, mode)
 
     if result is None:
         print("Pose nicht erreichbar; Arm bleibt stehen.")
@@ -89,6 +92,26 @@ def move_to_pose(pk, target_pose: npt.NDArray[np.float64], attempts: int = 10, m
     move_to_angles(pk, result, timeout=timeout)
 
     return result
+
+
+def adapt_target(start_pose: npt.NDArray[np.float64], target_pose: npt.NDArray[np.float64], mode: str) -> npt.NDArray[np.float64]:
+    """Return the target pose with the orientation the tool actually needs for mode.
+
+    "full" keeps the target orientation, "direction" turns the start orientation
+    by the shortest rotation onto the target tool x-axis, "position" keeps the
+    start orientation. A straight path to the returned pose then contains no
+    unnecessary rotation.
+
+    Returns:
+        Pose with shape (4, 4).
+    """
+    rot_vec = orientation_error(target_pose[:3, :3], start_pose[:3, :3], mode)
+    rot_angle = np.linalg.norm(rot_vec)
+    rot_axis = rot_vec / rot_angle if rot_angle > 1e-9 else AXES["z"]
+
+    pose = target_pose.copy()
+    pose[:3, :3] = rotation(rot_axis, rot_angle) @ start_pose[:3, :3]
+    return pose
 
 
 def interpolate_pose(start_pose: npt.NDArray[np.float64], target_pose: npt.NDArray[np.float64], fraction: float) -> npt.NDArray[np.float64]:
@@ -122,12 +145,14 @@ def segment_deviation(
     target_pose: npt.NDArray[np.float64],
     from_fraction: float,
     to_fraction: float,
+    mode: str = "full",
 ) -> tuple[float, float]:
     """Return how far the tool leaves the straight path while the servos move
     linearly from from_angles to to_angles.
 
     The tool is checked at least every 2 degrees of joint motion against the
-    path pose between from_fraction and to_fraction.
+    path pose between from_fraction and to_fraction. The angle only counts
+    the orientation that matters for mode, see orientation_error.
 
     Returns:
         A tuple (position, angle) with the largest deviation in mm and degrees.
@@ -140,7 +165,7 @@ def segment_deviation(
         reached = forward_kinematics(from_angles + k / checks * (to_angles - from_angles))
         expected = interpolate_pose(start_pose, target_pose, from_fraction + k / checks * (to_fraction - from_fraction))
         pos_dev = max(pos_dev, np.linalg.norm(reached[:3, 3] - expected[:3, 3]))
-        rot_dev = max(rot_dev, np.degrees(np.linalg.norm(rotation_error(expected[:3, :3], reached[:3, :3]))))
+        rot_dev = max(rot_dev, np.degrees(np.linalg.norm(orientation_error(expected[:3, :3], reached[:3, :3], mode))))
 
     return pos_dev, rot_dev
 
@@ -162,7 +187,7 @@ def path_timing(start_pose: npt.NDArray[np.float64], target_pose: npt.NDArray[np
     return count, duration
 
 
-def plan_linear(start_angles: list[float], target_pose: npt.NDArray[np.float64]) -> tuple[list[list[float]], float] | None:
+def plan_linear(start_angles: list[float], target_pose: npt.NDArray[np.float64], mode: str = "full") -> tuple[list[list[float]], float] | None:
     """Plan a straight tool path from the pose at start_angles to a target pose.
 
     The position is interpolated linearly, the orientation rotates about a
@@ -173,6 +198,7 @@ def plan_linear(start_angles: list[float], target_pose: npt.NDArray[np.float64])
     Args:
         start_angles: Current servo angles in degrees.
         target_pose: Target tool pose with shape (4, 4), position in mm.
+        mode: "full", "direction" or "position", see orientation_error.
 
     Returns:
         A tuple (path, step_time). path contains the servo angles in degrees
@@ -183,13 +209,14 @@ def plan_linear(start_angles: list[float], target_pose: npt.NDArray[np.float64])
     """
     motion = ARM_CONFIG["linear_motion"]
     start_pose = forward_kinematics(start_angles)
+    target_pose = adapt_target(start_pose, target_pose, mode)
     count, duration = path_timing(start_pose, target_pose)
 
     path = []
     previous = np.array(start_angles, dtype=float)
 
     for i in range(1, count + 1):
-        result = inverse_kinematics(interpolate_pose(start_pose, target_pose, i / count), previous)
+        result = inverse_kinematics(interpolate_pose(start_pose, target_pose, i / count), previous, mode=mode)
         if result is None:
             return None
 
@@ -209,12 +236,12 @@ def plan_linear(start_angles: list[float], target_pose: npt.NDArray[np.float64])
             # Pull the interpolated angles back onto the path, unless the IK
             # jumps to another solution. The tool check below decides then.
             if j < substeps:
-                corrected = inverse_kinematics(interpolate_pose(start_pose, target_pose, fraction), angles)
+                corrected = inverse_kinematics(interpolate_pose(start_pose, target_pose, fraction), angles, mode=mode)
                 if corrected is not None and np.abs(np.array(corrected) - last).max() <= 1.5 * motion["max_joint_step"]:
                     angles = np.array(corrected)
 
             # The servos move linearly between waypoints, check the tool in between.
-            pos_dev, rot_dev = segment_deviation(last, angles, start_pose, target_pose, (i - 1 + (j - 1) / substeps) / count, fraction)
+            pos_dev, rot_dev = segment_deviation(last, angles, start_pose, target_pose, (i - 1 + (j - 1) / substeps) / count, fraction, mode)
             if pos_dev > motion["path_tolerance"] or rot_dev > motion["path_angle_tolerance"]:
                 return None
 
@@ -230,6 +257,7 @@ def plan_near_linear(
     start_angles: list[float],
     target_pose: npt.NDArray[np.float64],
     max_angle_change: float = 360,
+    mode: str = "full",
 ) -> tuple[list[list[float]], float, float, float] | None:
     """Plan a path that follows a straight tool line as closely as possible.
 
@@ -243,6 +271,7 @@ def plan_near_linear(
         target_pose: Target tool pose with shape (4, 4), position in mm.
         max_angle_change: Largest allowed change of a single servo angle
             between start and target in degrees, see solve_pose.
+        mode: "full", "direction" or "position", see orientation_error.
 
     Returns:
         A tuple (path, step_time, pos_dev, rot_dev). path and step_time as in
@@ -250,13 +279,14 @@ def plan_near_linear(
         straight line in mm and degrees. Returns None if target_pose is not reachable.
     """
     motion = ARM_CONFIG["linear_motion"]
-    goal = solve_pose(target_pose, start_angles, max_angle_change=max_angle_change)
+    goal = solve_pose(target_pose, start_angles, max_angle_change=max_angle_change, mode=mode)
     if goal is None:
         return None
 
     start = np.array(start_angles, dtype=float)
     goal = np.array(goal)
     start_pose = forward_kinematics(start)
+    target_pose = adapt_target(start_pose, target_pose, mode)
 
     count, duration = path_timing(start_pose, target_pose)
     count = max(count, int(np.ceil(np.abs(goal - start).max() / motion["max_joint_step"])))
@@ -276,14 +306,14 @@ def plan_near_linear(
             # A low rot_weight keeps the position closer to the line than the orientation.
             guess = previous + (goal - previous) / (remaining + 1)
             pose = interpolate_pose(start_pose, target_pose, i / count)
-            angles = np.array(inverse_kinematics(pose, guess, max_iter=50, rot_weight=10.0, best_effort=True))
+            angles = np.array(inverse_kinematics(pose, guess, max_iter=50, rot_weight=10.0, best_effort=True, mode=mode))
 
             # Keep the guess if the IK jumps or the goal could not be reached in time anymore.
             if (np.abs(angles - previous).max() > motion["max_joint_step"]
                     or np.abs(goal - angles).max() > remaining * motion["max_joint_step"]):
                 angles = guess
 
-        segment_pos, segment_rot = segment_deviation(previous, angles, start_pose, target_pose, (i - 1) / count, i / count)
+        segment_pos, segment_rot = segment_deviation(previous, angles, start_pose, target_pose, (i - 1) / count, i / count, mode)
         pos_dev = max(pos_dev, segment_pos)
         rot_dev = max(rot_dev, segment_rot)
 
@@ -338,7 +368,7 @@ def follow_path(pk, path: list[list[float]], step_time: float) -> list[float]:
     return path[-1]
 
 
-def move_linear(pk, target_pose: npt.NDArray[np.float64]) -> list[float] | None:
+def move_linear(pk, target_pose: npt.NDArray[np.float64], mode: str = "full") -> list[float] | None:
     """Move the tool along a straight line to a target pose.
 
     Plans the whole path before moving. If the exact line is not feasible,
@@ -348,6 +378,7 @@ def move_linear(pk, target_pose: npt.NDArray[np.float64]) -> list[float] | None:
     Args:
         pk: Servo communication interface.
         target_pose: Target tool pose with shape (4, 4), position in mm.
+        mode: "full", "direction" or "position", see orientation_error.
 
     Returns:
         The servo angles in degrees at the target, or None if the target is not reachable.
@@ -356,10 +387,10 @@ def move_linear(pk, target_pose: npt.NDArray[np.float64]) -> list[float] | None:
         RuntimeError: If a servo is overloaded during the motion. All servos are stopped.
     """
     start = read_angles(pk)
-    plan = plan_linear(start, target_pose)
+    plan = plan_linear(start, target_pose, mode)
 
     if plan is None:
-        near = plan_near_linear(start, target_pose)
+        near = plan_near_linear(start, target_pose, mode=mode)
         if near is None:
             print("Pose nicht erreichbar; Arm bleibt stehen.")
             return None
