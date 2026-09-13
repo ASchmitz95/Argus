@@ -1,15 +1,17 @@
 from scservo_sdk import PortHandler, sms_sts, COMM_SUCCESS
 import serial.tools.list_ports
+import json
 import sys
 import time
+from pathlib import Path
 
-STEPS_PER_REV = 4096
-BAUD      = 1_000_000
-SPEED     = 2400
-ACC       = 200
-TOLERANZ  = 8
-NULL_POS = {2 : 2051, 3 : 1050, 4 : 900, 5 : 2112, 6 : 2200, 7 : 2358}
-SERVO_RANGE = {2: (-100 , 100), 3: (-2 , 180), 4: (-2 , 180), 5: (-100 , 100), 6: (-90 , 90), 7: (-150 , 150)}
+CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "motor.json"
+
+with open(CONFIG_PATH, encoding="utf-8") as f:
+    CONFIG = json.load(f)
+
+# JSON keys are strings, servo IDs are used as integers.
+SERVOS = {int(servo_ID): servo for servo_ID, servo in CONFIG["servos"].items()}
 
 
 def read_pos(pk, servo_ID, degree=False):
@@ -23,11 +25,11 @@ def read_pos(pk, servo_ID, degree=False):
 
     Returns:
         The absolute position in steps, or the signed angular offset
-        from NULL_POS[servo_ID] in degrees if degree is True.
+        from the servo's null_pos in degrees if degree is True.
     """
     pos, _, _, _ = pk.ReadPosSpeed(servo_ID)
     if degree:
-        pos = ((pos - NULL_POS[servo_ID]) / STEPS_PER_REV) * 360
+        pos = ((pos - SERVOS[servo_ID]["null_pos"]) / CONFIG["steps_per_rev"]) * 360
         return pos
     return pos
 
@@ -35,8 +37,8 @@ def read_pos(pk, servo_ID, degree=False):
 def connect():
     """Open the first serial port that supports the configured baud rate.
 
-    Tries each detected serial port until opening it and setting BAUD
-    succeeds. This does not verify that a servo is connected or responding.
+    Tries each detected serial port until opening it and setting the baud
+    rate succeeds. This does not verify that a servo is connected or responding.
 
     Returns:
         A tuple containing the open PortHandler and its sms_sts interface.
@@ -58,7 +60,7 @@ def connect():
         if not ph.openPort():
             continue
 
-        if not ph.setBaudRate(BAUD):
+        if not ph.setBaudRate(CONFIG["baud"]):
             ph.closePort()
             continue
 
@@ -69,25 +71,26 @@ def connect():
 
 
 def check_collision(angles):
-    """Clamp target angles for servos 2–7 to their configured limits."""
-    angles = [min(max(angles[i-2] , SERVO_RANGE[i][0]) , SERVO_RANGE[i][1]) for i in range(2,8)]
+    """Clamp target angles for all configured servos to their limits."""
+    angles = [min(max(angle, servo["min_angle"]), servo["max_angle"]) for angle, servo in zip(angles, SERVOS.values(), strict=True)]
     return angles
 
 
 def move_to_angles(pk, angles, timeout=1):
-    """Move servos 2-7 to angles in degrees relative to their calibrated
-    zero positions, waiting until motion completes or the timeout expires.
+    """Move all configured servos to angles in degrees relative to their
+    calibrated zero positions, waiting until motion completes or the timeout expires.
     """
     angles = check_collision(angles)
-    target_pos_List = [(NULL_POS[i] + int(angles[i-2] / 360 * STEPS_PER_REV)) % STEPS_PER_REV for i in range(2,8)]
+    steps = CONFIG["steps_per_rev"]
+    target_pos = {servo_ID: (servo["null_pos"] + int(angle / 360 * steps)) % steps for (servo_ID, servo), angle in zip(SERVOS.items(), angles)}
     start = time.time()
-    for i in range(2,8):
-        pk.WritePosEx(i, target_pos_List[i-2], SPEED, ACC)
+    for servo_ID, pos in target_pos.items():
+        pk.WritePosEx(servo_ID, pos, CONFIG["speed"], CONFIG["acc"])
     while time.time() - start <= timeout:
         flag = True
-        for i in range(2,8):
-            moving, _, _ = pk.ReadMoving(i)
-            if abs(read_pos(pk, i) - target_pos_List[i-2]) > TOLERANZ:
+        for servo_ID, pos in target_pos.items():
+            moving, _, _ = pk.ReadMoving(servo_ID)
+            if abs(read_pos(pk, servo_ID) - pos) > CONFIG["tolerance"]:
                 flag = False
             if moving != 0:
                 flag = False
@@ -97,15 +100,15 @@ def move_to_angles(pk, angles, timeout=1):
 
 
 def move_by_angles(pk, angle_offsets):
-    """Move servos 2-7 by the given signed offsets in degrees
+    """Move all configured servos by the given signed offsets in degrees
     relative to their current positions.
     """
-    current_pos_List = [(read_pos(pk, i, degree=True)) for i in range(2,8)]
-    target_pos_List = [current_pos_List[i] + angle_offsets[i] for i in range(len(angle_offsets))]
+    current_pos_List = [read_pos(pk, servo_ID, degree=True) for servo_ID in SERVOS]
+    target_pos_List = [current + offset for current, offset in zip(current_pos_List, angle_offsets, strict=True)]
     move_to_angles(pk, target_pos_List)
 
 
 def go_home(pk):
     """Returns all servoes to their Null Position.
     """
-    move_to_angles(pk, [0,0,0,0,0,0])
+    move_to_angles(pk, [0] * len(SERVOS))

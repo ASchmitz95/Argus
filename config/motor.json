@@ -1,0 +1,15 @@
+{
+    "baud": 1000000,
+    "steps_per_rev": 4096,
+    "speed": 2400,
+    "acc": 200,
+    "tolerance": 8,
+    "servos": {
+        "2": {"null_pos": 2051, "min_angle": -100, "max_angle": 100},
+        "3": {"null_pos": 1050, "min_angle": -2,   "max_angle": 180},
+        "4": {"null_pos": 900,  "min_angle": -2,   "max_angle": 180},
+        "5": {"null_pos": 2112, "min_angle": -100, "max_angle": 100},
+        "6": {"null_pos": 2200, "min_angle": -90,  "max_angle": 90},
+        "7": {"null_pos": 2358, "min_angle": -150, "max_angle": 150}
+    }
+}

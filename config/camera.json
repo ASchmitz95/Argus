@@ -1,0 +1,15 @@
+{
+    "index": 0,
+    "backend": "MSMF",
+    "fourcc": "MJPG",
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "detection": {
+        "target_color": [255, 0, 0],
+        "color_tolerance": 0.085,
+        "min_area": 1000,
+        "gap": 25,
+        "tolerance_size": 150
+    }
+}
