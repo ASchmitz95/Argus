@@ -101,6 +101,50 @@ def check_collision(angles):
     return angles
 
 
+def angles_to_steps(angles):
+    """Convert servo angles in degrees relative to the zero positions to
+    absolute positions in steps.
+
+    Returns:
+        Dict mapping each servo ID to its position in steps.
+    """
+    steps = CONFIG["steps_per_rev"]
+    return {servo_ID: (servo["null_pos"] + int(angle / 360 * steps)) % steps for (servo_ID, servo), angle in zip(SERVOS.items(), angles, strict=True)}
+
+
+def check_load(pk, servo_ID, moving):
+    """Stop all servos and raise if a servo is overloaded.
+
+    Args:
+        pk: Servo communication interface.
+        servo_ID: ID of the servo to check.
+        moving: Whether the servo is moving. Moving servos need more load
+            than holding ones, so max_load_moving or max_load_holding is used.
+
+    Raises:
+        RuntimeError: If the load exceeds the limit. All servos are stopped before raising.
+    """
+    load = read_load(pk, servo_ID)
+    max_load = CONFIG["max_load_moving"] if moving else CONFIG["max_load_holding"]
+    if abs(load) > max_load:
+        stop(pk)
+        raise RuntimeError(f"Überlast an Servo {servo_ID} ({load}); Arm gestoppt.")
+
+
+def sync_write_pos(pk, positions, speeds):
+    """Send goal positions and speeds to all given servos in one packet.
+
+    Args:
+        pk: Servo communication interface.
+        positions: Dict mapping servo IDs to positions in steps.
+        speeds: Dict mapping servo IDs to speeds in steps per second.
+    """
+    for servo_ID, pos in positions.items():
+        pk.SyncWritePosEx(servo_ID, pos, speeds[servo_ID], CONFIG["acc"])
+    pk.groupSyncWrite.txPacket()
+    pk.groupSyncWrite.clearParam()
+
+
 def move_to_angles(pk, angles, timeout=1):
     """Move all configured servos to angles in degrees relative to their
     calibrated zero positions, waiting until motion completes or the timeout expires.
@@ -111,8 +155,7 @@ def move_to_angles(pk, angles, timeout=1):
             All servos are stopped before raising.
     """
     angles = check_collision(angles)
-    steps = CONFIG["steps_per_rev"]
-    target_pos = {servo_ID: (servo["null_pos"] + int(angle / 360 * steps)) % steps for (servo_ID, servo), angle in zip(SERVOS.items(), angles)}
+    target_pos = angles_to_steps(angles)
     start = time.time()
     for servo_ID, pos in target_pos.items():
         pk.WritePosEx(servo_ID, pos, CONFIG["speed"], CONFIG["acc"])
@@ -121,12 +164,7 @@ def move_to_angles(pk, angles, timeout=1):
         for servo_ID, pos in target_pos.items():
             moving, _, _ = pk.ReadMoving(servo_ID)
             # Stop on overload, e.g. when the arm hits an obstacle.
-            # Moving servos need more load than holding ones.
-            load = read_load(pk, servo_ID)
-            max_load = CONFIG["max_load_moving"] if moving else CONFIG["max_load_holding"]
-            if abs(load) > max_load:
-                stop(pk)
-                raise RuntimeError(f"Überlast an Servo {servo_ID} ({load}); Arm gestoppt.")
+            check_load(pk, servo_ID, moving)
             if abs(read_pos(pk, servo_ID) - pos) > CONFIG["tolerance"]:
                 flag = False
             if moving != 0:
