@@ -32,3 +32,6 @@ Thumbs.db
 
 # Local test scripts
 *_test.py
+
+# Claude Code
+.claude/
